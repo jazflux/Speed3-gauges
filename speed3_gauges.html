@@ -887,11 +887,19 @@ setTimeout(showApp, 2900);
 setTimeout(showApp, 4000);
 
 // ── OBD2 BLUETOOTH ENGINE ───────────────────────────────────
-// ELM327 Bluetooth Low Energy service/characteristic UUIDs
-// Vgate iCar Pro 2S uses standard ELM327 BLE profile
-const OBD_SERVICE     = '0000fff0-0000-1000-8000-00805f9b34fb';
-const OBD_WRITE_CHAR  = '0000fff2-0000-1000-8000-00805f9b34fb';
-const OBD_NOTIFY_CHAR = '0000fff1-0000-1000-8000-00805f9b34fb';
+// Vgate iCar Pro 2S BLE UUIDs — tries both common profiles
+const PROFILES = [
+  { // Profile A — FFE0 (most common ELM327 BLE)
+    service:  '0000ffe0-0000-1000-8000-00805f9b34fb',
+    write:    '0000ffe1-0000-1000-8000-00805f9b34fb',
+    notify:   '0000ffe1-0000-1000-8000-00805f9b34fb',
+  },
+  { // Profile B — FFF0 (alternate ELM327 BLE)
+    service:  '0000fff0-0000-1000-8000-00805f9b34fb',
+    write:    '0000fff2-0000-1000-8000-00805f9b34fb',
+    notify:   '0000fff1-0000-1000-8000-00805f9b34fb',
+  },
+];
 
 let obdDevice = null;
 let obdChar   = null;
@@ -1028,14 +1036,21 @@ function updateConnUI(connected) {
   }
 }
 
+function setStatus(msg, color) {
+  const btn = document.getElementById('connectBtn');
+  if (btn) { btn.textContent = msg; btn.style.color = color || 'var(--orange)'; }
+}
+
 async function connectOBD() {
   if (!navigator.bluetooth) {
-    alert('Web Bluetooth not available. Use Chrome on Android.');
+    alert('Web Bluetooth not available.\nUse Chrome on Android with bluetooth enabled.');
     return;
   }
   try {
-    const btn = document.getElementById('connectBtn');
-    btn.textContent = 'SCANNING...';
+    setStatus('SCANNING...', 'var(--amber)');
+
+    // Collect all service UUIDs to scan for
+    const allServices = PROFILES.map(p => p.service);
 
     obdDevice = await navigator.bluetooth.requestDevice({
       filters: [
@@ -1044,34 +1059,61 @@ async function connectOBD() {
         { name: 'OBDII' },
         { namePrefix: 'V-LINK' },
         { namePrefix: 'iCar' },
+        { namePrefix: 'Vgate' },
+        { services: [PROFILES[0].service] },
+        { services: [PROFILES[1].service] },
       ],
-      optionalServices: [OBD_SERVICE]
+      optionalServices: allServices
     });
 
     obdDevice.addEventListener('gattserverdisconnected', () => {
       isLive = false;
       updateConnUI(false);
+      setStatus('DISCONNECTED', 'var(--red)');
     });
 
-    const server  = await obdDevice.gatt.connect();
-    const service = await server.getPrimaryService(OBD_SERVICE);
-    obdChar       = await service.getCharacteristic(OBD_WRITE_CHAR);
-    const notify  = await service.getCharacteristic(OBD_NOTIFY_CHAR);
+    setStatus('CONNECTING...', 'var(--amber)');
+    const server = await obdDevice.gatt.connect();
+    setStatus('CONNECTED...', 'var(--amber)');
 
-    await notify.startNotifications();
-    notify.addEventListener('characteristicvaluechanged', e => {
+    // Try each profile until one works
+    let service = null, writeChar = null, notifyChar = null;
+    for (const profile of PROFILES) {
+      try {
+        service    = await server.getPrimaryService(profile.service);
+        writeChar  = await service.getCharacteristic(profile.write);
+        notifyChar = await service.getCharacteristic(profile.notify);
+        setStatus('SERVICE OK', 'var(--green)');
+        break; // Found working profile
+      } catch(e) {
+        service = null;
+        continue; // Try next profile
+      }
+    }
+
+    if (!service) {
+      throw new Error('No compatible OBD service found on device');
+    }
+
+    obdChar = writeChar;
+    await notifyChar.startNotifications();
+    notifyChar.addEventListener('characteristicvaluechanged', e => {
       const raw = new TextDecoder().decode(e.target.value);
       handleOBDResponse(raw);
     });
 
+    setStatus('INITIALIZING...', 'var(--amber)');
     await initELM327();
 
   } catch(e) {
     console.error('OBD connect error:', e);
-    const btn = document.getElementById('connectBtn');
-    btn.textContent = '● CONNECT';
+    isLive = false;
     if (e.name !== 'NotFoundError') {
-      alert('Connection failed: ' + e.message);
+      setStatus('FAILED - RETRY', 'var(--red)');
+      setTimeout(() => updateConnUI(false), 2000);
+      alert('Connection failed:\n' + e.message + '\n\nMake sure car is on and Vgate is plugged in.');
+    } else {
+      updateConnUI(false);
     }
   }
 }
