@@ -1,0 +1,9 @@
+{
+  "name": "MAZDASPEED 3",
+  "short_name": "SPEED3",
+  "display": "fullscreen",
+  "orientation": "landscape",
+  "background_color": "#060608",
+  "theme_color": "#060608",
+  "start_url": "./speed3_gauges.html"
+}
