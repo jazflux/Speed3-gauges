@@ -1116,6 +1116,14 @@ async function connectOBD() {
     }
 
     if (!service) {
+      // Show exactly what services were found before failing
+      try {
+        const allSvcs = await server.getPrimaryServices();
+        const uuids = allSvcs.map(s => s.uuid).join('\n');
+        alert('Connected but wrong services!\n\nFound ' + allSvcs.length + ' service(s):\n' + uuids + '\n\nScreenshot this and report back!');
+      } catch(e) {
+        alert('Connected but could not discover services.\nError: ' + e.message + '\n\nScreenshot this!');
+      }
       throw new Error('No compatible OBD service found on device');
     }
 
@@ -1133,9 +1141,9 @@ async function connectOBD() {
     console.error('OBD connect error:', e);
     isLive = false;
     if (e.name !== 'NotFoundError') {
-      setStatus('FAILED - RETRY', 'var(--red)');
-      setTimeout(() => updateConnUI(false), 2000);
-      alert('Connection failed:\n' + e.message + '\n\nMake sure car is on and Vgate is plugged in.');
+      setStatus('FAILED: ' + e.message.substring(0,30), 'var(--red)');
+      // Keep the error message visible for 10 seconds
+      setTimeout(() => updateConnUI(false), 10000);
     } else {
       updateConnUI(false);
     }
