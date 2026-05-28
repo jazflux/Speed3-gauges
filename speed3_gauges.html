@@ -1054,16 +1054,21 @@ async function connectOBD() {
 
     obdDevice = await navigator.bluetooth.requestDevice({
       filters: [
-        { name: 'Android-Vlink' },
         { name: 'IOS-Vlink' },
-        { name: 'OBDII' },
-        { namePrefix: 'V-LINK' },
-        { namePrefix: 'iCar' },
-        { namePrefix: 'Vgate' },
+        { name: 'IOS-VLINK' },
+        { name: 'Android-Vlink' },
+        { name: 'Android-VLINK' },
         { services: [PROFILES[0].service] },
         { services: [PROFILES[1].service] },
       ],
-      optionalServices: allServices
+      optionalServices: [
+        '0000ffe0-0000-1000-8000-00805f9b34fb',
+        '0000ffe1-0000-1000-8000-00805f9b34fb',
+        '0000fff0-0000-1000-8000-00805f9b34fb',
+        '0000fff1-0000-1000-8000-00805f9b34fb',
+        '0000fff2-0000-1000-8000-00805f9b34fb',
+        '00001101-0000-1000-8000-00805f9b34fb',
+      ]
     });
 
     obdDevice.addEventListener('gattserverdisconnected', () => {
@@ -1075,20 +1080,39 @@ async function connectOBD() {
     setStatus('CONNECTING...', 'var(--amber)');
     const server = await obdDevice.gatt.connect();
     setStatus('CONNECTED...', 'var(--amber)');
+    // Vgate BLE 4.0 needs time to initialize after GATT connect
+    // Without this delay service discovery fails consistently
+    await new Promise(r => setTimeout(r, 2000));
+    try {
+      const allSvcs = await server.getPrimaryServices();
+      const uuids = allSvcs.map(s => s.uuid).join('\n');
+      console.log('Available services:', uuids);
+      // Show briefly in status
+      setStatus('SVCS:' + allSvcs.length, 'var(--blue-bright)');
+      await new Promise(r => setTimeout(r, 1000));
+    } catch(e) {
+      console.log('Service discovery error:', e);
+    }
 
-    // Try each profile until one works
+    // Try each profile until one works — with retries
     let service = null, writeChar = null, notifyChar = null;
-    for (const profile of PROFILES) {
-      try {
-        service    = await server.getPrimaryService(profile.service);
-        writeChar  = await service.getCharacteristic(profile.write);
-        notifyChar = await service.getCharacteristic(profile.notify);
-        setStatus('SERVICE OK', 'var(--green)');
-        break; // Found working profile
-      } catch(e) {
-        service = null;
-        continue; // Try next profile
+    for (let attempt = 0; attempt < 3; attempt++) {
+      for (const profile of PROFILES) {
+        try {
+          service    = await server.getPrimaryService(profile.service);
+          writeChar  = await service.getCharacteristic(profile.write);
+          notifyChar = await service.getCharacteristic(profile.notify);
+          setStatus(`SERVICE OK (attempt ${attempt+1})`, 'var(--green)');
+          break;
+        } catch(e) {
+          service = null;
+          await new Promise(r => setTimeout(r, 500));
+          continue;
+        }
       }
+      if (service) break;
+      setStatus(`RETRY ${attempt+1}/3...`, 'var(--amber)');
+      await new Promise(r => setTimeout(r, 1000));
     }
 
     if (!service) {
