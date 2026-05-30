@@ -600,13 +600,55 @@ function smooth() {
   if (RAW.kr === 0) D.kr = 0;
 }
 
-// ── DEMO SIMULATOR ──────────────────────────────────────────
+// ── PI DATA FETCH ───────────────────────────────────────────
+const PI_URL = 'http://192.168.4.1:8080/data';
+let piReachable = false;
+
+async function fetchFromPi() {
+  try {
+    const response = await fetch(PI_URL, { signal: AbortSignal.timeout(500) });
+    const d = await response.json();
+    RAW.boost   = typeof d.boost   === 'number' ? d.boost   : RAW.boost;
+    RAW.afr     = typeof d.afr     === 'number' ? d.afr     : RAW.afr;
+    RAW.kr      = typeof d.kr      === 'number' ? d.kr      : RAW.kr;
+    RAW.rpm     = typeof d.rpm     === 'number' ? d.rpm     : RAW.rpm;
+    RAW.coolant = typeof d.coolant === 'number' ? d.coolant : RAW.coolant;
+    RAW.iat     = typeof d.iat     === 'number' ? d.iat     : RAW.iat;
+    RAW.speed   = typeof d.speed   === 'number' ? d.speed   : RAW.speed;
+    RAW.tps     = typeof d.tps     === 'number' ? d.tps     : RAW.tps;
+    RAW.load    = typeof d.load    === 'number' ? d.load    : RAW.load;
+    RAW.ltft    = typeof d.ltft    === 'number' ? d.ltft    : RAW.ltft;
+    RAW.stft    = typeof d.stft    === 'number' ? d.stft    : RAW.stft;
+    RAW.batt    = typeof d.batt    === 'number' ? d.batt    : RAW.batt;
+    piReachable = true;
+    isLive = d.connected === true;
+    // Update UI
+    const dot = document.getElementById('dot');
+    const btn = document.getElementById('connectBtn');
+    if (d.connected) {
+      if (dot) dot.classList.add('live');
+      if (btn) { btn.textContent = '● LIVE'; btn.style.color = 'var(--green)'; }
+    } else {
+      if (dot) dot.classList.remove('live');
+      if (btn) { btn.textContent = '● PI OK'; btn.style.color = 'var(--amber)'; }
+    }
+  } catch(e) {
+    piReachable = false;
+    isLive = false;
+    const dot = document.getElementById('dot');
+    const btn = document.getElementById('connectBtn');
+    if (dot) dot.classList.remove('live');
+    if (btn) { btn.textContent = '◉ DEMO'; btn.style.color = 'var(--text-dim)'; }
+  }
+  smooth();
+}
+
+// ── DEMO SIMULATOR — fallback when Pi not reachable ─────────
 let t = 0;
 function sim() {
   t += 0.04;
   const rev = Math.max(0, Math.sin(t * 0.12));
   const rnd = (a,b) => a + Math.random()*(b-a);
-  // Write to RAW — smooth() blends these into D
   RAW.rpm     = 850 + rev*5800 + rnd(-40,40);
   RAW.boost   = -11 + rev*30 + rnd(-0.3,0.3);
   RAW.afr     = rev > 0.3 ? 11.2 + rnd(-0.3,0.3) : 14.7 + rnd(-0.2,0.2);
@@ -618,7 +660,7 @@ function sim() {
   RAW.speed   = rev*95 + rnd(-1,1);
   RAW.ltft    = -2.17 + rnd(-0.3,0.3);
   RAW.stft    = 1.2 + rnd(-0.5,0.5);
-  smooth(); // blend RAW into D
+  smooth();
 }
 
 // ── PEAK HOLD ───────────────────────────────────────────────
@@ -1161,13 +1203,11 @@ function disconnectOBD() {
 }
 
 // ── MAIN LOOP ───────────────────────────────────────────────
-// Always run smooth+update for display
-// When live: RAW is fed by OBD, sim() is skipped
-// When demo: sim() feeds RAW
-setInterval(() => {
-  if (!isLive) sim(); // demo mode when not connected
-  smooth();           // always smooth RAW into D
-  update();           // always update display
+// Fetch from Pi every 100ms — falls back to demo if Pi unreachable
+setInterval(async () => {
+  await fetchFromPi();      // try Pi first
+  if (!piReachable) sim();  // demo mode if Pi not reachable
+  update();                 // always update display
 }, 100);
 
 </script>
